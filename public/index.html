@@ -1529,16 +1529,17 @@ function rosterScheduleForDate(emp,dateStr){
   if(!emp||!dateStr)return null;
   const target=new Date(`${dateStr}T00:00:00`);
   if(Number.isNaN(target.getTime()))return null;
+  let selected=null;
   for(const roster of getRosters()){
     if(!rosterTargetsEmployee(roster,emp))continue;
     for(const entry of getRosterEntries(roster)){
       if(!rosterEntryMatchesEmployee(entry,emp))continue;
       const start=new Date(`${entry.weekStart}T00:00:00`);
-      const offset=Math.round((target-start)/86400000);
-      if(!Number.isNaN(start.getTime())&&offset>=0&&offset<7)return entry;
+      if(Number.isNaN(start.getTime())||start>target)continue;
+      if(!selected||start>selected.start)selected={entry,start};
     }
   }
-  return null;
+  return selected?selected.entry:null;
 }
 
 function isRosterWeekOff(emp,dateStr){
