@@ -406,6 +406,7 @@ let S = {
 const BACKEND=window.location.origin+'/api';
 const _cache={wiom_att:{},wiom_leaves:[],wiom_notifs:{},wiom_custom_emps:[],wiom_resignations:[],wiom_rosters:[],wiom_logins:[]};
 let _cacheLoaded=false;
+let _rosterRefreshPromise=null;
 async function loadCache(){
   if(_cacheLoaded)return;
   try{
@@ -416,6 +417,22 @@ async function loadCache(){
     if(d.ok){for(const k of Object.keys(_cache)){if(d.data[k])_cache[k]=JSON.parse(d.data[k]);}}
   }catch(e){console.warn('Backend unavailable, using local cache');}
   _cacheLoaded=true;
+}
+function refreshRosterCache(){
+  if(_rosterRefreshPromise)return _rosterRefreshPromise;
+  _rosterRefreshPromise=fetch(BACKEND+'?key=wiom_rosters',{cache:'no-store',headers:{'Accept':'application/json'}})
+    .then(r=>{if(!r.ok)throw new Error('roster refresh failed');return r.json();})
+    .then(d=>{
+      if(!d.ok||!d.value)return false;
+      const next=JSON.parse(d.value);
+      const changed=JSON.stringify(_cache.wiom_rosters)!==JSON.stringify(next);
+      _cache.wiom_rosters=next;
+      if(changed&&S.page==='attendance')renderAttendance();
+      return changed;
+    })
+    .catch(()=>false)
+    .finally(()=>{_rosterRefreshPromise=null;});
+  return _rosterRefreshPromise;
 }
 function _save(key,attempt){
   attempt=attempt||1;
@@ -511,6 +528,7 @@ function _updateSyncBadge(){
 }
 
 let _bgSyncInterval=null;
+let _rosterRefreshInterval=null;
 function _attSyncAll(){
   const pending=_attPendingGet();
   if(Object.keys(pending).length>0)_updateSyncBadge();
@@ -523,6 +541,11 @@ function _startBgSync(){
   },3*60*1000);
 }
 function _stopBgSync(){if(_bgSyncInterval){clearInterval(_bgSyncInterval);_bgSyncInterval=null;}}
+function _startRosterRefresh(){
+  if(_rosterRefreshInterval)clearInterval(_rosterRefreshInterval);
+  _rosterRefreshInterval=setInterval(()=>{if(S.user)refreshRosterCache();},60*1000);
+}
+function _stopRosterRefresh(){if(_rosterRefreshInterval){clearInterval(_rosterRefreshInterval);_rosterRefreshInterval=null;}}
 
 function setEmpAtt(empId,dateStr,data){
   const a=getAtt();const attKey=getAttKey(empId,dateStr);
@@ -588,6 +611,7 @@ async function loginSuccess(user,skipTrack){
   await loadCache();
   _attSyncAll();
   _startBgSync();
+  _startRosterRefresh();
   // Reset to base list first so deleted employees don't persist across logins
   EMPLOYEES.length=0;_BASE_EMPLOYEES.forEach(e=>EMPLOYEES.push({...e}));
   getCustomEmps().forEach(e=>{const idx=EMPLOYEES.findIndex(x=>x.id===e.id);if(idx>=0)EMPLOYEES[idx]=e;else EMPLOYEES.push(e);});
@@ -621,6 +645,7 @@ async function loginSuccess(user,skipTrack){
 
 function logout(){
   _stopBgSync();
+  _stopRosterRefresh();
   S.user=null;
   _cacheLoaded=false;
   try{localStorage.removeItem('wiom_session');}catch(e){}
@@ -639,7 +664,10 @@ function showPage(pg){
   document.getElementById('pageTitle').textContent=PAGE_TITLES[pg]||pg;
   S.page=pg;
   renderPage(pg);
+  if(pg==='attendance')refreshRosterCache();
 }
+window.addEventListener('focus',()=>{if(S.user)refreshRosterCache();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&S.user)refreshRosterCache();});
 
 function renderPage(pg){
   if(pg==='dashboard')renderDashboard();
