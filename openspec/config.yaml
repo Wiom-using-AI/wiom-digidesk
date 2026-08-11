@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  DigiDesk is Wiom's employee operations application for attendance, leave,
+  rosters, employee administration, documents, resignation, and Slack-backed
+  workflows. It is a Next.js application deployed on a Himadri-owned Vercel
+  project with an isolated Supabase project for Google authentication and
+  state. Accepted behavior and safety invariants live in openspec/specs/.
+  Active architecture, procedures, configuration, and implementation maps live
+  under docs/. Code and tests are implementation evidence, not product intent.
+  Employee and HR data is sensitive; never include real records or secrets in
+  artifacts.
+
+rules:
+  proposal:
+    - State the user or operator problem, outcome, scope, and explicit non-goals.
+    - Name every affected capability and identify authorization, data, Slack, cron, migration, and deployment impact.
+    - Include compatibility, rollback, and sensitive-data impact where applicable.
+  specs:
+    - Describe observable intended behavior with SHALL or MUST.
+    - Give every requirement at least one concrete GIVEN/WHEN/THEN scenario, including failure behavior where relevant.
+    - Keep commands, credential inventories, troubleshooting, and source navigation under docs/.
+    - Distinguish intended behavior from known implementation conformance debt.
+    - Use repo-relative paths and never record secret values or personal data.
+    - A MODIFIED delta must repeat the complete requirement and preserve its exact canonical heading.
+  design:
+    - Identify actor authorization, persistence, integration, migration, evidence, deployment, and rollback boundaries.
+    - Preserve the isolated Supabase and linked Vercel ownership boundaries unless a proposal explicitly changes them.
+  tasks:
+    - Keep tasks ordered and independently verifiable.
+    - Include strict OpenSpec validation, affected automated tests, and safe environment-specific evidence.
+    - Mark a task complete only after implementation and evidence are complete.

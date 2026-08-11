@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PRODUCT="DigiDesk"
+REPO_SLUG="wiom-digidesk"
+EXPECTED_GITHUB="himadrineogi-source/wiom-digidesk"
+VERCEL_TEAM_ID="team_yRutlr5oTCDcga81c7ObrOfZ"
+VERCEL_PROJECT_ID="prj_p1WX3aU0Wa9LH6jdMtI8D8vG7lmY"
+VERCEL_PROJECT_NAME="wiom-digidesk"
+PRODUCTION_URL="https://wiom-digidesk.vercel.app"
+DEFAULT_PORT="3000"
+PACKAGE_RUNNER="npm"
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'HELP'
+DigiDesk debugging CLI
+
+Usage:
+  ./debugging_cli status
+  ./debugging_cli doctor --env dev|prod
+  ./debugging_cli dev [arguments...]
+  ./debugging_cli test [arguments...]
+  ./debugging_cli lint [arguments...]
+  ./debugging_cli typecheck [arguments...]
+  ./debugging_cli build [arguments...]
+  ./debugging_cli specs <list|changes|validate>
+  ./debugging_cli probe --env dev|prod
+  ./debugging_cli logs --env prod [--lines N]
+
+Default diagnostics are offline. Production doctor, probe, and logs are
+read-only and require HIMADRI_VERCEL_TOKEN. This CLI never deploys, mutates
+provider configuration, queries application data, or prints credential values.
+
+Runbook: docs/runbooks/debugging.md
+HELP
+}
+
+require_tool() {
+  command -v "$1" >/dev/null 2>&1 || fail "required tool not found: $1"
+}
+
+credential_presence() {
+  local name="$1"
+  if [[ -v "$name" && -n "${!name}" ]]; then
+    printf '  OK  %s is set\n' "$name"
+  else
+    printf '  --  %s is not set\n' "$name"
+  fi
+}
+
+origin_is_canonical() {
+  local origin
+  origin="$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)"
+  case "$origin" in
+    "https://github.com/$EXPECTED_GITHUB"|"https://github.com/$EXPECTED_GITHUB.git"|"git@github.com:$EXPECTED_GITHUB"|"git@github.com:$EXPECTED_GITHUB.git")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_canonical_origin() {
+  origin_is_canonical || fail "origin is not the canonical $EXPECTED_GITHUB repository (unexpected value withheld)"
+}
+
+package_has_script() {
+  node -e 'const p=require(process.argv[1]); process.exit(p.scripts && Object.hasOwn(p.scripts, process.argv[2]) ? 0 : 1)' "$ROOT/package.json" "$1"
+}
+
+run_package_script() {
+  local script="$1"
+  shift
+  require_tool node
+  require_tool "$PACKAGE_RUNNER"
+  package_has_script "$script" || fail "package script is not supported by this repository: $script"
+  cd "$ROOT"
+  if [[ "$#" -gt 0 ]]; then
+    exec "$PACKAGE_RUNNER" run "$script" -- "$@"
+  fi
+  exec "$PACKAGE_RUNNER" run "$script"
+}
+
+print_local_link_state() {
+  local link="$ROOT/.vercel/project.json"
+  if [[ ! -f "$link" ]]; then
+    printf 'vercel link: missing locally (embedded allowlist remains authoritative)\n'
+    return
+  fi
+  if jq -e --arg project "$VERCEL_PROJECT_ID" --arg team "$VERCEL_TEAM_ID"     '.projectId == $project and .orgId == $team' "$link" >/dev/null 2>&1; then
+    printf 'vercel link: OK (allowlisted project)\n'
+  else
+    printf 'vercel link: INVALID (unexpected ids withheld)\n'
+  fi
+}
+
+cmd_status() {
+  [[ "$#" -eq 0 ]] || fail "status accepts no arguments"
+  require_tool git
+  require_tool node
+  require_tool jq
+  printf 'product:  %s\n' "$PRODUCT"
+  printf 'root:     %s\n' "$ROOT"
+  printf 'expected: %s\n' "$EXPECTED_GITHUB"
+  if origin_is_canonical; then
+    printf 'origin:   OK (Himadri-owned)\n'
+  else
+    printf 'origin:   INVALID (unexpected value withheld)\n'
+  fi
+  printf 'branch:   %s\n' "$(git -C "$ROOT" branch --show-current)"
+  printf 'HEAD:     %s\n' "$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+  local changed
+  changed="$(git -C "$ROOT" status --porcelain=v1 | wc -l | tr -d ' ')"
+  if [[ "$changed" = "0" ]]; then
+    printf 'worktree: clean\n'
+  else
+    printf 'worktree: dirty (%s entries; paths withheld)\n' "$changed"
+  fi
+  [[ -f "$ROOT/package.json" ]] && printf 'package:  present\n' || printf 'package:  missing\n'
+  [[ -d "$ROOT/node_modules" ]] && printf 'modules:  present\n' || printf 'modules:  missing\n'
+  [[ -f "$ROOT/.env.local" ]] && printf 'env.local: present\n' || printf 'env.local: missing\n'
+  [[ -d "$ROOT/openspec" ]] && printf 'openspec: present\n' || printf 'openspec: not configured\n'
+  print_local_link_state
+  printf 'vercel:   %s (%s)\n' "$VERCEL_PROJECT_NAME" "$PRODUCTION_URL"
+  printf 'credentials (presence only):\n'
+  credential_presence GH_HIMADRI_PAT
+  credential_presence HIMADRI_VERCEL_TOKEN
+  credential_presence HIMADRI_SUPABASE_ACCESS_TOKEN
+}
+
+parse_environment() {
+  SELECTED_ENV=""
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --env)
+        [[ "$#" -ge 2 ]] || fail "--env requires dev or prod"
+        SELECTED_ENV="$2"
+        shift 2
+        ;;
+      --env=*)
+        SELECTED_ENV="${1#--env=}"
+        shift
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+  [[ "$SELECTED_ENV" = "dev" || "$SELECTED_ENV" = "prod" ]] || fail "--env requires dev or prod"
+}
+
+vercel_get() {
+  curl -fsS --header @<(printf 'Authorization: Bearer %s\n' "$HIMADRI_VERCEL_TOKEN") "$@"
+}
+
+require_vercel_authority() {
+  [[ -v HIMADRI_VERCEL_TOKEN && -n "$HIMADRI_VERCEL_TOKEN" ]] || fail "HIMADRI_VERCEL_TOKEN is required"
+  require_tool curl
+  require_tool jq
+  local identity project
+  identity="$(vercel_get "https://api.vercel.com/v2/user")" || fail "Vercel identity check failed"
+  [[ "$(jq -r '.user.username // empty' <<<"$identity")" = "himadrineogi-8356" ]]     || fail "Vercel identity is not the authorized Himadri account"
+  project="$(vercel_get "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_TEAM_ID")"     || fail "Vercel project check failed"
+  [[ "$(jq -r '.id // empty' <<<"$project")" = "$VERCEL_PROJECT_ID" ]]     || fail "Vercel project id mismatch"
+  [[ "$(jq -r '.name // empty' <<<"$project")" = "$VERCEL_PROJECT_NAME" ]]     || fail "Vercel project name mismatch"
+  printf '  OK  Vercel identity and project are allowlisted\n'
+}
+
+doctor_dev() {
+  require_canonical_origin
+  local tool
+  for tool in git node "$PACKAGE_RUNNER" curl jq; do
+    require_tool "$tool"
+    printf '  OK  %s on PATH\n' "$tool"
+  done
+  [[ -f "$ROOT/package.json" ]] || fail "package.json is missing"
+  printf '  OK  package.json present\n'
+  if [[ -d "$ROOT/node_modules" ]]; then
+    printf '  OK  node_modules present\n'
+  else
+    printf '  --  node_modules missing; install dependencies before delegated commands\n'
+  fi
+  if [[ -f "$ROOT/.env.local" ]]; then
+    printf '  OK  .env.local present (values not loaded or printed)\n'
+  else
+    printf '  --  .env.local missing\n'
+  fi
+  printf 'doctor passed (dev; offline)\n'
+}
+
+doctor_prod() {
+  require_canonical_origin
+  require_tool git
+  require_tool node
+  require_tool curl
+  require_tool jq
+  require_vercel_authority
+  print_local_link_state
+  printf 'doctor passed (prod; read-only)\n'
+}
+
+cmd_doctor() {
+  parse_environment "$@"
+  if [[ "$SELECTED_ENV" = "dev" ]]; then
+    doctor_dev
+  else
+    doctor_prod
+  fi
+}
+
+cmd_specs() {
+  [[ -d "$ROOT/openspec" ]] || fail "OpenSpec is not configured in this repository"
+  [[ "$#" -eq 1 ]] || fail "specs requires list, changes, or validate"
+  cd "$ROOT"
+  case "$1" in
+    list) exec npm exec -- openspec list --specs ;;
+    changes) exec npm exec -- openspec list ;;
+    validate) exec npm exec -- openspec validate --all --strict --no-interactive ;;
+    *) fail "specs requires list, changes, or validate" ;;
+  esac
+}
+
+cmd_probe() {
+  parse_environment "$@"
+  require_tool curl
+  local url
+  if [[ "$SELECTED_ENV" = "prod" ]]; then
+    require_vercel_authority
+    url="$PRODUCTION_URL"
+  else
+    url="http://localhost:$DEFAULT_PORT"
+  fi
+  curl -sS -L --max-time 20 -o /dev/null     -w 'http_status=%{http_code}\nfinal_url=%{url_effective}\n' "$url"
+}
+
+cmd_logs() {
+  local env="" lines=100
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --env)
+        [[ "$#" -ge 2 ]] || fail "--env requires prod"
+        env="$2"
+        shift 2
+        ;;
+      --env=*)
+        env="${1#--env=}"
+        shift
+        ;;
+      --lines)
+        [[ "$#" -ge 2 ]] || fail "--lines requires a positive integer"
+        lines="$2"
+        shift 2
+        ;;
+      --lines=*)
+        lines="${1#--lines=}"
+        shift
+        ;;
+      *)
+        fail "unknown logs option: $1"
+        ;;
+    esac
+  done
+  [[ "$env" = "prod" ]] || fail "logs requires --env prod; development logs stay in the dev terminal"
+  [[ "$lines" =~ ^[1-9][0-9]*$ ]] || fail "--lines requires a positive integer"
+  (( lines <= 500 )) || fail "--lines cannot exceed 500"
+  require_canonical_origin
+  require_tool curl
+  require_tool jq
+  require_vercel_authority
+  local deployments deployment_id deployment_url events
+  deployments="$(vercel_get "https://api.vercel.com/v6/deployments?projectId=$VERCEL_PROJECT_ID&teamId=$VERCEL_TEAM_ID&limit=30")"     || fail "could not list Vercel deployments"
+  deployment_id="$(jq -r '[.deployments[] | select((.target // "") == "production" and ((.readyState // .state // "") == "READY"))][0] | (.uid // .id // empty)' <<<"$deployments")"
+  deployment_url="$(jq -r '[.deployments[] | select((.target // "") == "production" and ((.readyState // .state // "") == "READY"))][0] | (.url // empty)' <<<"$deployments")"
+  [[ -n "$deployment_id" ]] || fail "no READY production deployment found"
+  events="$(vercel_get "https://api.vercel.com/v3/deployments/$deployment_id/events?teamId=$VERCEL_TEAM_ID&builds=1")"     || fail "could not read Vercel deployment events"
+  printf 'production_deployment=%s\n' "$deployment_url"
+  jq -r --argjson limit "$lines" '
+    .[(-$limit):][] |
+    ((.created // 0) as $created |
+      if ($created | type) == "number" and $created > 0
+      then (($created / 1000) | todateiso8601)
+      else "unknown-time"
+      end) as $time |
+    [$time, (.type // "event"), (.text // "")] | @tsv
+  ' <<<"$events"
+}
+
+main() {
+  local command="${1:-help}"
+  if [[ "$#" -gt 0 ]]; then shift; fi
+  case "$command" in
+    help|-h|--help) [[ "$#" -eq 0 ]] || fail "help accepts no arguments"; usage ;;
+    status) cmd_status "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    dev) run_package_script dev "$@" ;;
+    test) run_package_script test "$@" ;;
+    lint) run_package_script lint "$@" ;;
+    typecheck) run_package_script typecheck "$@" ;;
+    build) run_package_script build "$@" ;;
+    specs) cmd_specs "$@" ;;
+    probe) cmd_probe "$@" ;;
+    logs) cmd_logs "$@" ;;
+    *) usage >&2; fail "unknown command: $command" ;;
+  esac
+}
+
+main "$@"
