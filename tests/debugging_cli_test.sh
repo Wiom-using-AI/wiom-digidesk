@@ -18,7 +18,7 @@ doctor_output="$(./debugging_cli doctor --env dev)"
 combined="$status_output
 $doctor_output"
 
-[[ "$status_output" == *"expected: himadrineogi-source/wiom-digidesk"* ]]
+[[ "$status_output" == *"expected: himadrineogi-source/digidesk"* ]]
 [[ "$status_output" == *"https://wiom-digidesk.vercel.app"* ]]
 [[ "$doctor_output" == *"doctor passed (dev; offline)"* ]]
 

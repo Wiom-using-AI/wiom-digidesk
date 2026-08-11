@@ -7,7 +7,7 @@ DigiDesk has multiple existing operator commands but no single low-tax debugging
 **Goals:**
 
 - Provide one executable root CLI with strict arguments and stable diagnostics.
-- Validate the canonical himadrineogi-source/wiom-digidesk Git boundary and exact wiom-digidesk Vercel project before provider reads.
+- Validate the canonical himadrineogi-source/digidesk Git boundary and exact wiom-digidesk Vercel project before provider reads.
 - Keep default checks offline, report credential presence only, and make production reads explicit.
 - Reuse existing npm and OpenSpec commands so the CLI remains an operator facade rather than a second implementation.
 

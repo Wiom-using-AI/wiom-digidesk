@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PRODUCT="DigiDesk"
-REPO_SLUG="wiom-digidesk"
-EXPECTED_GITHUB="himadrineogi-source/wiom-digidesk"
+REPO_SLUG="digidesk"
+EXPECTED_GITHUB="himadrineogi-source/digidesk"
 VERCEL_TEAM_ID="team_yRutlr5oTCDcga81c7ObrOfZ"
 VERCEL_PROJECT_ID="prj_p1WX3aU0Wa9LH6jdMtI8D8vG7lmY"
 VERCEL_PROJECT_NAME="wiom-digidesk"

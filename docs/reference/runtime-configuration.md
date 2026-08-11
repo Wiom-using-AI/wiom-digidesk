@@ -7,7 +7,7 @@ credential values.
 
 | Surface | Approved authority | Expected target |
 | --- | --- | --- |
-| GitHub administration | Himadri GitHub identity (`GH_HIMADRI_PAT` in the Wiom workspace) | `himadrineogi-source/wiom-digidesk` |
+| GitHub administration | Himadri GitHub identity (`GH_HIMADRI_PAT` in the Wiom workspace) | `himadrineogi-source/digidesk` |
 | Vercel administration | `HIMADRI_VERCEL_TOKEN` | project `wiom-digidesk` |
 | Supabase management plane | `HIMADRI_SUPABASE_ACCESS_TOKEN` | project ref `ocgzadxwwnpshosksemj` |
 | Supabase runtime | DigiDesk-scoped URL, public key, and service-role key | the same isolated project |

@@ -21,7 +21,7 @@ Commands that are not defined by this repository's `package.json` fail explicitl
 
 ## Production boundary
 
-Production doctor, probe, and logs verify the exact Himadri Vercel identity and allowlisted `wiom-digidesk` project using only `HIMADRI_VERCEL_TOKEN`. Missing or wrong authority blocks the command; generic `VERCEL_TOKEN` and other owners' credentials are not fallbacks.
+Production doctor, probe, and logs verify the exact Himadri Vercel identity and allowlisted legacy provider `wiom-digidesk` project using only `HIMADRI_VERCEL_TOKEN`. Missing or wrong authority blocks the command; generic `VERCEL_TOKEN` and other owners' credentials are not fallbacks.
 
 The probe prints only HTTP status and final URL. Logs select the latest READY production deployment, cap output at 500 events, and write only to the terminal. Vercel events may contain employee or HR context: do not redirect them into the repository, paste them into tickets, or share them without reviewing and minimizing the content.
 
