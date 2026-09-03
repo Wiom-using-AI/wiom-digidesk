@@ -23,6 +23,7 @@ The application currently persists JSON-compatible values by logical key:
 - `wiom_notifs`
 - `wiom_resignations`
 - `wiom_rosters`
+- `wiom_holidays`
 - `wiom_logins`
 
 Documents selected by an employee are currently kept in that browser's local

@@ -406,7 +406,7 @@ let S = {
 
 // ==================== STORAGE ====================
 const BACKEND=window.location.origin+'/api';
-const _cache={wiom_att:{},wiom_leaves:[],wiom_notifs:{},wiom_custom_emps:[],wiom_resignations:[],wiom_rosters:[],wiom_logins:[]};
+const _cache={wiom_att:{},wiom_leaves:[],wiom_notifs:{},wiom_custom_emps:[],wiom_resignations:[],wiom_rosters:[],wiom_holidays:[],wiom_logins:[]};
 let _cacheLoaded=false;
 let _rosterRefreshPromise=null;
 async function loadCache(){
@@ -458,6 +458,8 @@ function getResignations(){return _cache.wiom_resignations;}
 function saveResignations(d){_cache.wiom_resignations=d;return _save('wiom_resignations');}
 function getRosters(){return _cache.wiom_rosters;}
 function saveRosters(d){_cache.wiom_rosters=d;return _save('wiom_rosters');}
+function getHolidays(){return _cache.wiom_holidays||[];}
+function saveHolidays(d){_cache.wiom_holidays=d;return _save('wiom_holidays');}
 function getNotifs(empId){return(_cache.wiom_notifs[empId])||[];}
 function addNotif(empId,msg){if(!empId)return;if(!_cache.wiom_notifs[empId])_cache.wiom_notifs[empId]=[];_cache.wiom_notifs[empId].unshift({msg,date:today(),read:false});_save('wiom_notifs');}
 function markNotifsRead(empId){if(!empId)return;if(_cache.wiom_notifs[empId])_cache.wiom_notifs[empId].forEach(x=>x.read=true);_save('wiom_notifs');}
@@ -1319,6 +1321,9 @@ ${lwdOver?`<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius
     <div class="leg-item"><div class="leg-badge" style="background:#fee2e2;color:#b91c1c">A</div> Absent</div>
     <div class="leg-item"><div class="leg-badge" style="background:#fef9c3;color:#a16207">L</div> Leave</div>
     <div class="leg-item"><div class="leg-badge" style="background:#f3f4f6;color:#9ca3af">WO</div> Week Off</div>
+    <div class="leg-item"><div class="leg-badge" style="background:#dbeafe;color:#1d4ed8">H</div> Holiday</div>
+    <div class="leg-item"><div class="leg-badge" style="background:#e0e7ff;color:#3730a3">PH</div> Public Holiday</div>
+    <div class="leg-item"><div class="leg-badge" style="background:#d1fae5;color:#047857">PWO</div> Present on Week Off</div>
     <div class="leg-item"><div class="leg-badge" style="background:#ede9fe;color:#E5178F">CO</div> Comp Off</div>
     <div class="leg-item"><div class="leg-badge" style="background:#E5178F;color:#fff">•</div> Today</div>
   </div>
@@ -1328,31 +1333,26 @@ ${lwdOver?`<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius
 function buildCalendar(empId,y,m){
   const firstDay=new Date(y,m,1).getDay();
   const daysInMonth=new Date(y,m+1,0).getDate();
-  const att=getAtt();
   const emp=EMPLOYEES.find(e=>e.id===empId);
-  const approvedLeaves=getLeaves().filter(l=>l.empId===empId&&l.status==='Approved');
+  const clsFor={
+    P:'cd-present',A:'cd-absent',L:'cd-leave',WO:'cd-weekend',CO:'cd-compoff',
+    H:'cd-leave',PH:'cd-leave',PWO:'cd-present'
+  };
   let html='';
   for(let i=0;i<firstDay;i++)html+=`<div class="cal-day cd-empty"></div>`;
   for(let d=1;d<=daysInMonth;d++){
     const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const dow=new Date(y,m,d).getDay();
     const isToday=ds===today();
-    const isFuture=ds>today();
-    const isWeekOff=isRosterWeekOff(emp,ds);
-    const onLeave=approvedLeaves.some(l=>ds>=l.from&&ds<=l.to);
-    const attRec=att[getAttKey(empId,ds)];
-    let cls='cal-day ';let lbl='';
-    if(isToday){cls+='cd-today';lbl=isWeekOff?'WO':'';}
-    else if(isFuture){cls+=isWeekOff?'cd-weekend':'cd-future';lbl=isWeekOff?'WO':'';}
-    else if(onLeave){cls+='cd-leave';lbl='L';}
-    else if(isWeekOff){cls+='cd-weekend';lbl='WO';}
-    else if(attRec&&attRec.compoff){cls+='cd-compoff';lbl='CO';}
-    else if(attRec&&attRec.in){cls+='cd-present';lbl='P';}
-    else{cls+='cd-absent';lbl='A';}
+    const lbl=attendanceStatusCode(emp,ds,{includeFuture:true});
+    let cls='cal-day ';
+    if(isToday)cls+='cd-today';
+    else if(!lbl&&ds>today())cls+='cd-future';
+    else cls+=(clsFor[lbl]||'cd-absent');
     html+=`<div class="${cls}"><div>${d}</div>${lbl?`<div style="font-size:8px;font-weight:800;line-height:1;margin-top:1px">${lbl}</div>`:''}</div>`;
   }
   return html;
 }
+
 
 function getMyResignation(empId){return getResignations().find(r=>r.empId===empId&&r.status==='HR Approved');}
 function isLwdPassed(empId){const r=getMyResignation(empId);return r&&today()>r.lwd;}
@@ -1606,9 +1606,8 @@ function rosterScheduleForDate(emp,dateStr){
 
 function isRosterWeekOff(emp,dateStr){
   const schedule=rosterScheduleForDate(emp,dateStr);
-  if(schedule)return schedule.daysOff.includes(new Date(`${dateStr}T00:00:00`).getDay());
-  const dow=new Date(`${dateStr}T00:00:00`).getDay();
-  return dow===0||dow===6;
+  if(!schedule)return false;
+  return schedule.daysOff.includes(new Date(`${dateStr}T00:00:00`).getDay());
 }
 
 function rosterFileIsCsv(file){
@@ -1747,9 +1746,162 @@ function rosterListHTML(filterByMgr){
   }).join('');
 }
 
+function holidayTypeFromValue(value){
+  const n=String(value||'').trim().toUpperCase().replace(/[\s_\-]/g,'');
+  if(n==='PH'||n==='PUBLIC'||n==='PUBLICHOLIDAY'||n==='NATIONAL'||n==='NATIONALHOLIDAY')return 'PH';
+  if(n==='H'||n==='HOLIDAY'||n==='COMPANY'||n==='COMPANYHOLIDAY'||n==='OPTIONAL'||n==='OPTIONALHOLIDAY')return 'H';
+  return 'H';
+}
+
+function holidayOn(dateStr){
+  return getHolidays().find(h=>h&&h.date===dateStr)||null;
+}
+
+function parseHolidayCsv(text){
+  const rows=parseCsvRows(text);
+  if(!rows.length)return [];
+  const headerIndex=rows.findIndex(row=>row.some(cell=>{
+    const h=normalizeRosterHeader(cell);
+    return h==='date'||h==='holidaydate'||h==='holiday';
+  }));
+  if(headerIndex<0)return [];
+  const headers=rows[headerIndex].map(normalizeRosterHeader);
+  const indexOf=(...names)=>names.map(name=>headers.indexOf(name)).find(index=>index>=0);
+  const dateIndex=indexOf('date','holidaydate','holiday');
+  const nameIndex=indexOf('name','holidayname','title','description');
+  const typeIndex=indexOf('type','holidaytype','code','kind');
+  if(dateIndex===undefined)return [];
+  const byDate=new Map();
+  rows.slice(headerIndex+1).forEach(row=>{
+    const date=rosterDate(row[dateIndex]);
+    if(!date||!isIsoDate(date))return;
+    byDate.set(date,{
+      date,
+      name:normalizeRosterValue(row[nameIndex])||date,
+      type:holidayTypeFromValue(row[typeIndex])
+    });
+  });
+  return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+function attendanceStatusCode(emp,dateStr,opts){
+  opts=opts||{};
+  const withTime=!!opts.withTime;
+  const includeFuture=!!opts.includeFuture;
+  if(!dateStr)return '';
+  if(dateStr>today()&&!includeFuture)return '';
+  const rec=emp?getAtt()[getAttKey(emp.id,dateStr)]:null;
+  const punched=!!(rec&&rec.in);
+  const weekOff=isRosterWeekOff(emp,dateStr);
+  const holiday=holidayOn(dateStr);
+  if(dateStr>today()){
+    if(holiday)return holiday.type==='PH'?'PH':'H';
+    if(weekOff)return 'WO';
+    return '';
+  }
+  if(weekOff&&punched)return withTime?('PWO - '+rec.in):'PWO';
+  if(holiday&&punched)return withTime?('P - '+rec.in):'P';
+  if(holiday)return holiday.type==='PH'?'PH':'H';
+  if(weekOff)return 'WO';
+  const leave=emp?getLeaves().find(l=>l.empId===emp.id&&l.status==='Approved'&&dateStr>=l.from&&dateStr<=l.to):null;
+  if(leave)return leave.type==='CO'?'CO':'L';
+  if(rec&&rec.compoff)return 'CO';
+  if(punched)return withTime?('P - '+rec.in):'P';
+  return 'A';
+}
+
+function canMutateHolidays(){
+  return !!(S.user&&(S.user.role==='manager'||S.user.role==='hr'));
+}
+
+function canDeleteHoliday(h){
+  if(!S.user||!h)return false;
+  if(S.user.role==='hr')return true;
+  const actor=S.user.mgrName||(S.user.emp&&S.user.emp.name)||'';
+  return S.user.role==='manager'&&h.uploadedBy===actor;
+}
+
+function downloadHolidayTemplate(){
+  const y=new Date().getFullYear();
+  const csv='Date,Name,Type\n'+
+    `"${y}-01-26","Republic Day","PH"\n`+
+    `"${y}-08-15","Independence Day","PH"\n`+
+    `"${y}-10-02","Gandhi Jayanti","PH"\n`+
+    `"${y}-12-25","Christmas","H"\n`;
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download='Wiom_Holiday_List_Template.csv';a.click();
+  URL.revokeObjectURL(url);
+  showToast('Holiday list template downloaded!','s');
+}
+
+function uploadHolidayList(input){
+  if(!canMutateHolidays()){showToast('Only managers and HR can upload a holiday list.','e');input.value='';return;}
+  const file=input.files[0];
+  if(!file)return;
+  if(file.size>2*1024*1024){showToast('File too large. Max 2 MB.','e');input.value='';return;}
+  if(!rosterFileIsCsv(file)){showToast('Please upload the CSV holiday format.','e');input.value='';return;}
+  const reader=new FileReader();
+  reader.onload=async function(ev){
+    const parsed=parseHolidayCsv(ev.target.result);
+    if(!parsed.length){input.value='';showToast('Holiday list not saved. Use Date, Name, Type headers and at least one valid date.','e');return;}
+    const actor=S.user.role==='hr'?'HR Admin':(S.user.mgrName||(S.user.emp&&S.user.emp.name)||'Manager');
+    const uploadedAt=today();
+    const current=getHolidays().slice();
+    const byDate=new Map(current.map(h=>[h.date,h]));
+    parsed.forEach(h=>byDate.set(h.date,{...h,uploadedBy:actor,uploadedAt}));
+    const next=[...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+    try{await saveHolidays(next);}
+    catch(e){input.value='';showToast('Holiday list save failed. Please try again.','e');return;}
+    input.value='';
+    showToast('Holiday list updated: '+parsed.length+' dated row'+(parsed.length>1?'s':'')+'.','s');
+    if(S.user.role==='manager')renderManager();else renderHR();
+  };
+  reader.readAsText(file);
+}
+
+function deleteHoliday(dateStr){
+  const h=holidayOn(dateStr);
+  if(!canDeleteHoliday(h)){showToast('You cannot remove this holiday.','e');return;}
+  const next=getHolidays().filter(x=>x.date!==dateStr);
+  saveHolidays(next);
+  showToast('Holiday removed.','s');
+  if(S.user&&S.user.role==='manager')renderManager();else renderHR();
+}
+
+function holidayListHTML(){
+  const list=getHolidays();
+  if(!list.length)return'<div style="font-size:13px;color:#9ca3af;padding:8px 0">No holidays uploaded yet.</div>';
+  return list.map(h=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f4f6">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:#111827">${fmtDate(h.date)} · ${h.type}</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px">${h.name||'-'} · By: ${h.uploadedBy||'-'}</div>
+      </div>
+      ${canDeleteHoliday(h)?`<button class="btn btn-sm btn-danger" style="padding:5px 10px;font-size:12px" onclick="deleteHoliday('${h.date}')">✕</button>`:''}
+    </div>`).join('');
+}
+
+function holidayManagerHTML(){
+  return `<p class="sec-title" style="margin-top:16px">Holiday List</p>
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+    <div style="font-size:13px;color:#6b7280">Upload organisation holidays used in attendance reports (H and PH)</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm" style="background:#fef9c3;color:#a16207;border:1.5px solid #fde047;font-weight:600" onclick="downloadHolidayTemplate()">⬇ Download Format</button>
+      <label class="btn btn-sm btn-primary" style="cursor:pointer;margin:0">
+        📅 Upload Holidays
+        <input type="file" style="display:none" accept=".csv,text/csv" onchange="uploadHolidayList(this)">
+      </label>
+    </div>
+  </div>
+  <div>${holidayListHTML()}</div>
+</div>`;
+}
+
 function attendanceReportRangeHTML(scope,mgrName){
   const range=attendanceReportRange();
-  const label=scope==='all'?'⬇ Download All Employees Attendance (CSV)':'⬇ Download Team Attendance (CSV)';
   const safeMgr=String(mgrName||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   return `<div style="display:flex;justify-content:flex-end;align-items:flex-end;gap:10px;margin-top:10px;margin-bottom:4px;flex-wrap:wrap">
     <div>
@@ -1760,11 +1912,12 @@ function attendanceReportRangeHTML(scope,mgrName){
       <div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600">End date</div>
       <input type="date" id="attReportTo" value="${range.to}" onchange="setAttendanceReportRange(document.getElementById('attReportFrom').value,this.value)" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:13px;outline:none">
     </div>
-    <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0;font-weight:600" onclick="downloadAttendanceCSV('${scope}','${safeMgr}')">${label}</button>
+    <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0;font-weight:600" onclick="downloadAttendanceCSV('${scope}','${safeMgr}',false)">⬇ Codes only (CSV)</button>
+    <button class="btn btn-sm" style="background:#eff6ff;color:#1d4ed8;border:1.5px solid #bfdbfe;font-weight:600" onclick="downloadAttendanceCSV('${scope}','${safeMgr}',true)">⬇ With punch-in time (CSV)</button>
   </div>`;
 }
 
-function downloadAttendanceCSV(scope,mgrName){
+function downloadAttendanceCSV(scope,mgrName,withTime){
   if(!S.user||(S.user.role!=='manager'&&S.user.role!=='hr')){
     showToast('Only managers and HR can download attendance reports.','e');
     return;
@@ -1794,17 +1947,15 @@ function downloadAttendanceCSV(scope,mgrName){
   }
   const teamMgr=S.user.role==='manager'?(S.user.mgrName||mgrName):mgrName;
   const emps=scope==='all'?EMPLOYEES.filter(e=>e.role!=='hr'):EMPLOYEES.filter(e=>e.mgr===teamMgr&&e.role!=='hr');
-  const att=getAtt();const leaves=getLeaves();const resignations=getResignations();
-  const todayStr=today();
+  const resignations=getResignations();
   const dates=datesInclusive(from,to);
   const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const fixedHdrs=['E code','Full Name','Area','Agency','Department','DOJ','Mobile Number','Status','LWD Date'];
   const dateHdrs=dates.map(ds=>{
     const [y,m,d]=ds.split('-').map(Number);
-    const day=d;
     const mon=monthNames[m-1].slice(0,3);
     const yr=String(y).slice(2);
-    return `${day}-${mon}-${yr}`;
+    return `${d}-${mon}-${yr}`;
   });
   const csvRow=r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')+'\n';
   let csv=csvRow([...fixedHdrs,...dateHdrs]);
@@ -1812,15 +1963,7 @@ function downloadAttendanceCSV(scope,mgrName){
     const resign=resignations.find(r=>r.empId===emp.id&&r.status==='HR Approved');
     const lwd=resign?resign.lwd:'';
     const fixedCols=[emp.id,emp.name,emp.loc||'',emp.payroll||'',emp.dept||'',emp.doj||'',emp.mobile||'',emp.status||'Active',lwd];
-    const dateCols=dates.map(ds=>{
-      if(isRosterWeekOff(emp,ds))return 'WO';
-      if(ds>todayStr)return '';
-      const onLeave=leaves.some(l=>l.empId===emp.id&&l.status==='Approved'&&ds>=l.from&&ds<=l.to);
-      if(onLeave)return 'L';
-      const rec=att[getAttKey(emp.id,ds)];
-      if(rec&&rec.in)return 'P - '+rec.in;
-      return 'A';
-    });
+    const dateCols=dates.map(ds=>attendanceStatusCode(emp,ds,{withTime:!!withTime}));
     csv+=csvRow([...fixedCols,...dateCols]);
   });
   const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
@@ -1828,9 +1971,10 @@ function downloadAttendanceCSV(scope,mgrName){
   const a=document.createElement('a');
   a.href=url;
   const label=scope==='all'?'All_Employees':String(teamMgr||'Team').replace(/\s+/g,'_')+'_Team';
-  a.download=`Attendance_${label}_${from}_to_${to}.csv`;
+  const fmt=withTime?'punchin':'codes';
+  a.download=`Attendance_${label}_${from}_to_${to}_${fmt}.csv`;
   a.click();URL.revokeObjectURL(url);
-  showToast('Attendance report downloaded!','s');
+  showToast(withTime?'Attendance report with punch-in time downloaded!':'Attendance code report downloaded!','s');
 }
 
 
@@ -1990,6 +2134,7 @@ ${approved.length?`
   </div>
   <div id="mgrRosterList">${rosterListHTML(mgrName)}</div>
 </div>
+${holidayManagerHTML()}
 ${attendanceReportRangeHTML('team',mgrName)}
 <p class="sec-title" style="margin-top:16px">Resignation Requests</p>
 <div id="mgrResignContainer"></div>
@@ -2176,6 +2321,7 @@ function renderHR(){
   </div>
   <div>${rosterListHTML(null)}</div>
 </div>
+${holidayManagerHTML()}
 ${attendanceReportRangeHTML('all','')}
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;margin-bottom:6px">
