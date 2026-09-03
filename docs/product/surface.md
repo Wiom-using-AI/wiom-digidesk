@@ -7,9 +7,11 @@ authentication and active-employee matching.
 
 - Employees manage their own attendance, leave requests, profile-facing
   workflows, document selections, and resignation requests.
-- Managers review their own team's leave and attendance information.
+- Managers review their own team's leave and attendance information and
+  download team attendance reports for a selected start and end date.
 - HR administrators manage employees, rosters, cross-employee records,
-  reporting, and administrative decisions.
+  reporting, and administrative decisions, including organization-wide
+  attendance downloads for a selected start and end date.
 
 Role names do not grant authority by themselves. Every server mutation must
 derive the actor from the authenticated Supabase session and enforce record or
@@ -24,7 +26,8 @@ The current product includes:
 - attendance check-in and record management;
 - leave requests, manager/HR decisions, rejection reasons, and Slack notices;
 - roster import and effective-week scheduling;
-- employee administration and reporting for HR;
+- employee administration and reporting for HR, plus manager and HR attendance
+  CSV downloads for a selected start and end date;
 - resignation requests; and
 - browser-local document selection.
 

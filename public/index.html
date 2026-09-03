@@ -400,6 +400,8 @@ let S = {
   calYear: new Date().getFullYear(),
   calMonth: new Date().getMonth(),
   hrFilter: 'All',
+  reportFrom: null,
+  reportTo: null,
 };
 
 // ==================== STORAGE ====================
@@ -463,6 +465,38 @@ function unreadNotifCount(empId){return getNotifs(empId).filter(n=>!n.read).leng
 
 // ==================== DATE / QUARTER HELPERS ====================
 function today(){return new Date().toISOString().slice(0,10)}
+function monthStartISO(d){
+  d=d||new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+}
+function monthEndISO(d){
+  d=d||new Date();
+  const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(last).padStart(2,'0')}`;
+}
+function isIsoDate(s){
+  if(typeof s!=='string'||s.length!==10||s[4]!=='-'||s[7]!=='-')return false;
+  const [y,m,day]=s.split('-').map(Number);
+  const dt=new Date(y,m-1,day);
+  return dt.getFullYear()===y&&dt.getMonth()===m-1&&dt.getDate()===day;
+}
+function nextIsoDate(s){
+  const [y,m,day]=s.split('-').map(Number);
+  const dt=new Date(y,m-1,day+1);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function datesInclusive(from,to){
+  const dates=[];
+  for(let ds=from;ds<=to;ds=nextIsoDate(ds)) dates.push(ds);
+  return dates;
+}
+function attendanceReportRange(){
+  return{from:S.reportFrom||monthStartISO(),to:S.reportTo||monthEndISO()};
+}
+function setAttendanceReportRange(from,to){
+  S.reportFrom=from||null;
+  S.reportTo=to||null;
+}
 function fmtDate(s){if(!s)return '';const d=new Date(s);return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
 function daysBetween(a,b){return Math.round((new Date(b)-new Date(a))/(1000*60*60*24))+1}
 function getQuarter(dateStr){
@@ -1713,38 +1747,74 @@ function rosterListHTML(filterByMgr){
   }).join('');
 }
 
+function attendanceReportRangeHTML(scope,mgrName){
+  const range=attendanceReportRange();
+  const label=scope==='all'?'⬇ Download All Employees Attendance (CSV)':'⬇ Download Team Attendance (CSV)';
+  const safeMgr=String(mgrName||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<div style="display:flex;justify-content:flex-end;align-items:flex-end;gap:10px;margin-top:10px;margin-bottom:4px;flex-wrap:wrap">
+    <div>
+      <div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600">Start date</div>
+      <input type="date" id="attReportFrom" value="${range.from}" onchange="setAttendanceReportRange(this.value,document.getElementById('attReportTo').value)" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:13px;outline:none">
+    </div>
+    <div>
+      <div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600">End date</div>
+      <input type="date" id="attReportTo" value="${range.to}" onchange="setAttendanceReportRange(document.getElementById('attReportFrom').value,this.value)" style="border:1.5px solid #e5e7eb;border-radius:8px;padding:7px 10px;font-size:13px;outline:none">
+    </div>
+    <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0;font-weight:600" onclick="downloadAttendanceCSV('${scope}','${safeMgr}')">${label}</button>
+  </div>`;
+}
+
 function downloadAttendanceCSV(scope,mgrName){
-  const emps=scope==='all'?EMPLOYEES.filter(e=>e.role!=='hr'):EMPLOYEES.filter(e=>e.mgr===mgrName&&e.role!=='hr');
-  const att=getAtt();const leaves=getLeaves();const resignations=getResignations();
-  const now=new Date();const y=now.getFullYear();const m=now.getMonth();
-  const daysInMonth=new Date(y,m+1,0).getDate();
-  const todayStr=today();
-  // Build date list for this month (all days)
-  const dates=[];
-  for(let d=1;d<=daysInMonth;d++){
-    const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    dates.push(ds);
+  if(!S.user||(S.user.role!=='manager'&&S.user.role!=='hr')){
+    showToast('Only managers and HR can download attendance reports.','e');
+    return;
   }
+  if(scope==='all'&&S.user.role!=='hr'){
+    showToast('Only HR can download all-employee attendance.','e');
+    return;
+  }
+  const fromInput=document.getElementById('attReportFrom');
+  const toInput=document.getElementById('attReportTo');
+  let from,to;
+  if(fromInput||toInput){
+    from=fromInput?fromInput.value:'';
+    to=toInput?toInput.value:'';
+  }else{
+    const range=attendanceReportRange();
+    from=range.from;to=range.to;
+  }
+  S.reportFrom=from||null;S.reportTo=to||null;
+  if(!isIsoDate(from)||!isIsoDate(to)){
+    showToast('Select a valid start and end date.','e');
+    return;
+  }
+  if(from>to){
+    showToast('Start date must be on or before the end date.','e');
+    return;
+  }
+  const teamMgr=S.user.role==='manager'?(S.user.mgrName||mgrName):mgrName;
+  const emps=scope==='all'?EMPLOYEES.filter(e=>e.role!=='hr'):EMPLOYEES.filter(e=>e.mgr===teamMgr&&e.role!=='hr');
+  const att=getAtt();const leaves=getLeaves();const resignations=getResignations();
+  const todayStr=today();
+  const dates=datesInclusive(from,to);
   const monthNames=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  // Header row 1: fixed cols + date headers (DD-Mon format)
   const fixedHdrs=['E code','Full Name','Area','Agency','Department','DOJ','Mobile Number','Status','LWD Date'];
   const dateHdrs=dates.map(ds=>{
-    const dt=new Date(ds+'T00:00:00');
-    const day=dt.getDate();
-    const mon=monthNames[dt.getMonth()].slice(0,3);
-    const yr=String(dt.getFullYear()).slice(2);
+    const [y,m,d]=ds.split('-').map(Number);
+    const day=d;
+    const mon=monthNames[m-1].slice(0,3);
+    const yr=String(y).slice(2);
     return `${day}-${mon}-${yr}`;
   });
   const csvRow=r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')+'\n';
   let csv=csvRow([...fixedHdrs,...dateHdrs]);
   emps.forEach(emp=>{
-    // Find LWD from approved resignation
     const resign=resignations.find(r=>r.empId===emp.id&&r.status==='HR Approved');
     const lwd=resign?resign.lwd:'';
     const fixedCols=[emp.id,emp.name,emp.loc||'',emp.payroll||'',emp.dept||'',emp.doj||'',emp.mobile||'',emp.status||'Active',lwd];
     const dateCols=dates.map(ds=>{
       if(isRosterWeekOff(emp,ds))return 'WO';
-      if(ds>todayStr)return ''; // Future dates blank
+      if(ds>todayStr)return '';
       const onLeave=leaves.some(l=>l.empId===emp.id&&l.status==='Approved'&&ds>=l.from&&ds<=l.to);
       if(onLeave)return 'L';
       const rec=att[getAttKey(emp.id,ds)];
@@ -1757,12 +1827,12 @@ function downloadAttendanceCSV(scope,mgrName){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url;
-  const label=scope==='all'?'All_Employees':mgrName.replace(/\s+/g,'_')+'_Team';
-  const mon=String(m+1).padStart(2,'0');
-  a.download=`Attendance_${label}_${y}-${mon}.csv`;
+  const label=scope==='all'?'All_Employees':String(teamMgr||'Team').replace(/\s+/g,'_')+'_Team';
+  a.download=`Attendance_${label}_${from}_to_${to}.csv`;
   a.click();URL.revokeObjectURL(url);
   showToast('Attendance report downloaded!','s');
 }
+
 
 function reUploadDoc(i,input){
   const file=input.files[0];
@@ -1920,9 +1990,7 @@ ${approved.length?`
   </div>
   <div id="mgrRosterList">${rosterListHTML(mgrName)}</div>
 </div>
-<div style="display:flex;justify-content:flex-end;margin-top:10px;margin-bottom:4px">
-  <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0;font-weight:600" onclick="downloadAttendanceCSV('team','${mgrName}')">⬇ Download Team Attendance (CSV)</button>
-</div>
+${attendanceReportRangeHTML('team',mgrName)}
 <p class="sec-title" style="margin-top:16px">Resignation Requests</p>
 <div id="mgrResignContainer"></div>
 <p class="sec-title" style="margin-top:16px">Team Members (${teamEmps.length})</p>
@@ -2108,9 +2176,7 @@ function renderHR(){
   </div>
   <div>${rosterListHTML(null)}</div>
 </div>
-<div style="display:flex;justify-content:flex-end;margin-top:10px;margin-bottom:4px">
-  <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1.5px solid #bbf7d0;font-weight:600" onclick="downloadAttendanceCSV('all','')">⬇ Download All Employees Attendance (CSV)</button>
-</div>
+${attendanceReportRangeHTML('all','')}
 
 <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px;margin-bottom:6px">
   <p class="sec-title" style="margin-bottom:0">Restore Missing Attendance</p>
